@@ -1,0 +1,88 @@
+# P5 课堂级 Compose：把第 1–4 部分的四个服务用容器拉起来
+# - 启动：docker compose --profile app up -d   关闭：docker compose --profile app down
+# - 首次 up 会自动 build 镜像（依赖装进镜像层，约 1 分钟）；之后 up 秒起，改代码不用重建
+# - 想跳过 build、复用宿主机 backend/.venv：用 compose.venv.yml（见文档 5.3.4）
+# - RAGFlow 不在这里起：它从自己的源码目录 ~/ai/ragflow/docker 用官方 compose 启动（端口 9380），
+#   本栈的 mcp 服务通过 host.docker.internal 访问它。
+# - 不承诺生产高可用 / TLS / 备份；课堂目标是「讲得清、勾得完、指得出」。
+
+# 固定项目名：Compose 默认用目录名推导项目名，中文目录名会得到空串而报错。
+# 有了 name，在任何目录（包括中文名）里 up/down/config 都能用。
+name: kb-agent
+
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      # node_modules 用命名卷：第一次装完后复用，别把 root 属主文件写回源码树
+      - node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      - API_PROXY_TARGET=http://agent-api:8000
+    depends_on:
+      - agent-api
+    profiles: ["app"]
+
+  # 以下三个服务共用同一个镜像（依赖已烤进镜像，不再每次 pip install）
+  agent-api:
+    build: ./backend
+    image: kb-agent-backend
+    volumes:
+      - ./backend:/app        # 源码热挂载：改代码不用重建镜像
+    command: uvicorn server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - MODE=${MODE:-p4}
+      - MCP_SERVER_URL=http://mcp:8002
+      - A2A_SERVER_URL=http://a2a:8001
+      # RAG_MODE=ragflow-mcp 时 tools.py 要够到宿主机 9382；.env 里的 127.0.0.1 只属于宿主机
+      - RAGFLOW_MCP_URL=http://host.docker.internal:9382/mcp
+    depends_on:
+      - mcp
+      - a2a
+    # RAG_MODE=ragflow-mcp 时 agent-api 也要够到宿主机 9382（Linux 上手配 host-gateway）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["app"]
+
+  mcp:
+    build: ./backend
+    image: kb-agent-backend
+    volumes:
+      - ./backend:/app
+    command: python mcp_server.py
+    ports:
+      - "${MCP_PORT:-8002}:8002"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+      # 容器内访问宿主机上的 RAGFlow：固定写 host.docker.internal，不要从 .env 插值
+      # （.env 里的 127.0.0.1 是给宿主机脚本用的；容器里的 127.0.0.1 是它自己）
+      - RAGFLOW_BASE_URL=http://host.docker.internal:9380
+      # 同理：RAGFlow 自带 MCP 在宿主机的 9382；.env 里的 127.0.0.1 只属于宿主机
+      - RAGFLOW_MCP_URL=http://host.docker.internal:9382/mcp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["app"]
+
+  a2a:
+    build: ./backend
+    image: kb-agent-backend
+    volumes:
+      - ./backend:/app
+    command: python a2a_server.py
+    ports:
+      - "${A2A_PORT:-8001}:8001"
+    environment:
+      - A2A_HOST=0.0.0.0
+      - A2A_PORT=8001
+      - A2A_TOKEN=${A2A_TOKEN:-p4-a2a-demo-token}
+    profiles: ["app"]
+
+volumes:
+  node_modules:

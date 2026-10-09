@@ -1,0 +1,40 @@
+# 课堂对照样例：展示「测试 → 构建」骨架。
+# 不要求本仓库已配置 runner；密钥必须来自 GitHub Secrets。
+
+name: p5-agent-sketch
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Frontend lint/build (smoke)
+        working-directory: P3-Agent开发/实战/frontend
+        run: |
+          npm ci || npm install
+          npm run build
+          # 防止误打包本地密钥
+          ! grep -R "sk-" dist || (echo "possible secret in dist" && exit 1)
+
+      - name: Backend syntax smoke
+        working-directory: P4-工具与协议/实战/backend
+        run: |
+          python -m compileall .
+
+  # 选做：构建示意镜像（需要自行准备 Dockerfile 后才启用）
+  # image:
+  #   needs: smoke
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Build agent image
+  #       env:
+  #         # 示例：密钥来自 Secrets，而不是写在本文件
+  #         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  #       run: echo "docker build ... (sketch only)"

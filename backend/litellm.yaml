@@ -1,0 +1,18 @@
+model_list:
+  - model_name: smart
+    litellm_params:
+      model: openai/qwen-plus
+      api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+
+  - model_name: fast
+    litellm_params:
+      model: openai/qwen-turbo
+      api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+
+general_settings:
+  master_key: sk-litellm-course
+
+router_settings:
+  fallbacks: [{ "smart": ["fast"] }]

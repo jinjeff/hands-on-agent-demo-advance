@@ -1,0 +1,11 @@
+# 基础：mock 模式只需要这三个
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# 真 Agent 模式再装这两个（需要 Python 3.11+）
+# 本课按 AgentScope 2.0.8 编写：统一 Agent + FunctionTool，不再有 ReActAgent
+agentscope>=2.0.8
+openai>=1.40.0

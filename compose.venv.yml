@@ -1,0 +1,99 @@
+# 本地极速模式（可选）：复用宿主机 backend/.venv，零 build、零 pip install
+#
+# 用法：
+#   cd 01-总课程/实战
+#   docker compose -f compose.venv.yml --profile app up -d
+#   docker compose -f compose.venv.yml --profile app down
+#
+# 原理：把宿主机 venv 的 site-packages 挂进容器（A1 整包挂 venv 会失败——venv 里的
+# python 符号链接指向宿主 /usr/bin/python3.11，容器里是 /usr/local/bin/python3.11）。
+#
+# 前提与边界：
+#   1. backend/.venv 已存在（第一部分 1.2.1 建过），且 Python 版本是 3.11（与镜像一致）；
+#   2. 只覆盖 mock 三个模式（echo/p3/p4）——.venv 里没有 agentscope，
+#      MODE=agent 会按 server.py 的兜底逻辑回退 mock 并提示；
+#   3. 容器里 pip install 会把包装进宿主 venv（反之亦然），别在容器里 pip install；
+#   4. uvicorn 命令来自 venv/bin（没挂），所以这里用 python -m uvicorn 启动。
+
+name: kb-agent
+
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      - API_PROXY_TARGET=http://agent-api:8000
+    depends_on:
+      - agent-api
+    profiles: ["app"]
+
+  agent-api:
+    image: python:3.11-slim
+    working_dir: /app          # 覆盖默认的 build 镜像；镜像已在本地，不会触发 build
+    volumes:
+      - ./backend:/app
+      - ./backend/.venv/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages
+    command: python -m uvicorn server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - MODE=${MODE:-p4}
+      - MCP_SERVER_URL=http://mcp:8002
+      - A2A_SERVER_URL=http://a2a:8001
+      # RAG_MODE=ragflow-mcp 时 tools.py 要够到宿主机 9382；.env 里的 127.0.0.1 只属于宿主机
+      - RAGFLOW_MCP_URL=http://host.docker.internal:9382/mcp
+      - PYTHONDONTWRITEBYTECODE=1
+    depends_on:
+      - mcp
+      - a2a
+    # RAG_MODE=ragflow-mcp 时 agent-api 也要够到宿主机 9382（Linux 上手配 host-gateway）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["app"]
+
+  mcp:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - ./backend/.venv/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages
+    command: python mcp_server.py
+    ports:
+      - "${MCP_PORT:-8002}:8002"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8002
+      - PYTHONDONTWRITEBYTECODE=1
+      # 容器内访问宿主机上的 RAGFlow：固定写 host.docker.internal，不要从 .env 插值
+      # （.env 里的 127.0.0.1 是给宿主机脚本用的；容器里的 127.0.0.1 是它自己）
+      - RAGFLOW_BASE_URL=http://host.docker.internal:9380
+      # 同理：RAGFlow 自带 MCP 在宿主机的 9382；.env 里的 127.0.0.1 只属于宿主机
+      - RAGFLOW_MCP_URL=http://host.docker.internal:9382/mcp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["app"]
+
+  a2a:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - ./backend/.venv/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages
+    command: python a2a_server.py
+    ports:
+      - "${A2A_PORT:-8001}:8001"
+    environment:
+      - A2A_HOST=0.0.0.0
+      - A2A_PORT=8001
+      - A2A_TOKEN=${A2A_TOKEN:-p4-a2a-demo-token}
+      - PYTHONDONTWRITEBYTECODE=1
+    profiles: ["app"]
+
+volumes:
+  node_modules:

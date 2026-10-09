@@ -1,0 +1,10 @@
+# 合并依赖（.venv 外层的 .gitignore 已忽略）
+.venv/
+__pycache__/
+.env
+*.pyc
+.agent_ws/
+workspaces/
+
+# 第八部分：工作区与记忆落盘（gitignore）
+data/
